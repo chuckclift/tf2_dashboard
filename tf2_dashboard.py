@@ -36,8 +36,9 @@ tk_kills = tk.StringVar()
 tk_deaths = tk.StringVar()
 tk_kd = tk.StringVar()
 tk_streak = tk.StringVar()
+tk_elo = tk.StringVar()
 
-# top rowp
+# top row 
 tk.Label(master, text="stats", width=10, anchor="e").grid(row=1, column=1, sticky=tk.E)
 tk.Label(master, text="victims", width=15, anchor="e").grid(row=1, column=2)
 tk.Label(master, text="rivals", width=15, anchor="e").grid(row=1, column=3, sticky=tk.E)
@@ -54,6 +55,7 @@ tk.Label(master, textvariable=tk_kills).grid(row=2, column=1, sticky=tk.E)
 tk.Label(master, textvariable=tk_deaths).grid(row=3, column=1, sticky=tk.E)
 tk.Label(master, textvariable=tk_kd).grid(row=4, column=1, sticky=tk.E)
 tk.Label(master, textvariable=tk_streak).grid(row=5, column=1, sticky=tk.E)
+tk.Label(master, textvariable=tk_elo).grid(row=5, column=1, sticky=tk.E)
 
 victim_vars = [tk.StringVar() for _ in range(5)]
 rival_vars = [tk.StringVar() for _ in range(5)]
@@ -74,6 +76,16 @@ for i in range(2, 7):
     tk.Label(master, textvariable=rival_weapon_vars[i-2] ).grid(row=i, column=5, sticky=tk.E)
     tk.Label(master, textvariable=rival_class_vars[i-2]).grid(row=i, column=6, sticky=tk.E)
     tk.Label(master, textvariable=rival_dmg_type_vars[i-2]).grid(row=i, column=7, sticky=tk.E)
+
+def calculate_elo(killer_elo, victim_elo, k=30):
+    killer_expected_score = 1 / (1 + 10 ** ( (victim_elo - killer_elo) / 400))
+    victim_expected_score = 1 / (1 + 10 ** ( (killer_elo - victim_elo) / 400))
+
+    new_killer_elo = killer_elo + k * (1 - killer_expected_score)
+    new_victim_elo = victim_elo + k * (0 - victim_expected_score)
+    return (new_killer_elo, new_victim_elo)
+
+
 
 def sort_descending(d):
     return sorted([ (v, k) for k, v in d.items()], reverse=True)
@@ -137,16 +149,17 @@ def render() -> None:
         lines = f.readlines()
     gamer_names.update(read_connections(lines[-1000:]))
 
-    weapon_deaths: Dict = defaultdict(lambda: 0)
-    victims: Dict = defaultdict(lambda: 0)
-    rivals: Dict = defaultdict(lambda: 0)
-    class_deaths: Dict = defaultdict(lambda: 0)
-    dmg_type_deaths: Dict = defaultdict(lambda: 0)
-    player_class: Dict = {}
+
 
     server = ("", 0)
     while True:
         time.sleep(3)
+        weapon_deaths: Dict = defaultdict(lambda: 0)
+        victims: Dict = defaultdict(lambda: 0)
+        rivals: Dict = defaultdict(lambda: 0)
+        class_deaths: Dict = defaultdict(lambda: 0)
+        dmg_type_deaths: Dict = defaultdict(lambda: 0)
+        player_class: Dict = {}
 
 
         lines = []
@@ -168,6 +181,16 @@ def render() -> None:
             
         gamer_names.update(read_connections(game_lines))
         kill_events = [a for a in kill_events if a]
+
+        player_elo: Dict[str, float] = defaultdict(lambda: 1600.0)
+        for killer, victim, weapon in kill_events:
+            (k_elo, v_elo) = calculate_elo(player_elo[killer], player_elo[victim])
+            player_elo[killer] = k_elo
+            player_elo[victim] = v_elo
+
+        
+
+            
         kills = sum(1 for k, _,_ in kill_events if k == user)
         deaths: int = len([line for line in game_lines
                           if f"killed {user}" in line or line == f"{user} died."])
@@ -179,61 +202,37 @@ def render() -> None:
             elif victim == user:
                 streak_kills = 0
 
-        with open(fpath, encoding="utf-8", errors="ignore") as f:
-            for l in f:
-
-                    
-                if l.startswith(f"{user} killed"):
-                    victim_start = len(f"{user} killed")
-                    victim_end = l.rfind("with ")
+        for killer, victim, weapon in kill_events:
+            (k_elo, v_elo) = calculate_elo(player_elo[killer], player_elo[victim])
+            player_elo[killer] = k_elo
+            player_elo[victim] = v_elo
             
-                    victim = l[victim_start:victim_end]
-                    victim = victim if len(victim) < 15 else victim[:15]
-                    victims[victim] += 1
-                elif f"killed {user}" in l:
-                    weapon = l.split()[-1]
-                    if "(crit)" in weapon:
-                        weapon = l.split()[-2]
+            if weapon_class.get(weapon) not in {None, "many"}:
+                player_class[killer] = weapon_class.get(weapon)
+                
+            if killer == user:
+                victims[victim] += 1
+            elif victim == user:
+                rivals[killer] += 1
+                weapon_deaths[weapon] += 1
+                class_deaths[weapon_class.get(weapon, "many")] += 1
+                dmg_type_deaths[weapon_dmg.get(weapon, "melee")] += 1
 
-                    rival = l.split("killed")[0]
-                    rival = rival[:15] if len(rival) > 15 else rival
-                    rivals[rival] += 1
-
-                    if weapon_class.get(weapon) not in {None, "many"}:
-                        player_class[rival] = weapon_class.get(weapon)
-
-                    weapon_deaths[weapon] += 1
-                    if weapon not in weapon_class:
-                        log_unknown_weapon(weapon)
-                    else:
-                        class_deaths[weapon_class[weapon]] += 1
-                        dmg_type_deaths[weapon_dmg[weapon]] += 1
-                elif l.endswith(f"{user} died.") or l.endswith(f"{user} suicided"):
-                    weapon = l.split()[-1]
-                    if "(crit)" in weapon:
-                        weapon = l.split()[-2]
-
-                    weapon_deaths[weapon] += 1
-                elif f"{user} connected" == l.strip():
-                    weapon_deaths = defaultdict(lambda: 0)
-                    victims = defaultdict(lambda: 0)
-                    rivals = defaultdict(lambda: 0)
-                    class_deaths = defaultdict(lambda: 0)
-                    dmg_type_deaths = defaultdict(lambda: 0)
-                    player_class = {}
+        
 
         tk_kills.set(f"kills: {kills}")
         tk_deaths.set(f"deaths: {deaths}")
         kd_ratio = kills / deaths if deaths else 0
         tk_kd.set(f"k/d: {kd_ratio:.2f}")
         tk_streak.set(f"streak: {streak_kills}")
+        tk_elo.set(f"elo: {player_elo[user]:.1f}")
         
         # sorting columns into descending order
         for (vkills, vname), vv in zip(sort_descending(victims), victim_vars ):
             vv.set(f"{vname}: {vkills}")
 
         for (rdeaths, rname), rv, rci in zip(sort_descending(rivals), rival_vars, rival_class_icons):
-            rv.set(f"{rname} : {rdeaths}")              # {ci(rname)}
+            rv.set(f"{rname} ({player_elo[rname]:.1f} ) : {rdeaths}")              # {ci(rname)}
             rci.configure(image=class_tk_imgs[player_class.get(rname, "many")])
 
         for (wdeaths, wname), wv in zip(sort_descending(weapon_deaths), rival_weapon_vars):

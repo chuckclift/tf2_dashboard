@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple, Set, NamedTuple, Optional
 import socket
+from collections import defaultdict
 import re
 import a2s # type: ignore
 import networkx as nx
@@ -8,6 +9,10 @@ server_re = r"^Connected to \d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}.:\d{1,5}$"
 KillEvent = NamedTuple("KillEvent", [("killer", str),
                                      ("victim", str),
                                      ("weapon", str)])
+
+ObjectiveEvent = NamedTuple("ObjectiveEvent", [("players", Set[str]),
+                                               ("objective", str),
+                                               ("team", str)])
 
 def read_connections(lines: List[str]) -> Set[str]:
     """
@@ -19,6 +24,28 @@ def read_connections(lines: List[str]) -> Set[str]:
         if line.strip().endswith("connected"):
             usernames.add(line.strip()[:-10])
     return usernames
+
+
+def explained_points(lines:List[str], users:Set[str]) -> Dict[str, int]:
+    """
+    estimates the player points based on kills and capture/defense
+    events in the game log.  This does not capture event points like
+    assists, ubers, healing, or pushing the payload cart for 10 seconds.  
+
+    https://wiki.teamfortress.com/wiki/Scoreboard
+    """
+    user_points: Dict[str, int] = defaultdict(lambda: 0)
+    for line in lines:
+        kill_event = parse_kill_line(line, users)
+        if kill_event:
+            user_points[kill_event.killer] += 1
+            continue
+        objective_event = parse_objective_line(line, users)
+        if objective_event:
+            for player in objective_event.players:
+                user_points[player] += 1
+    return user_points
+                
 
 
 def calculate_elo(killer_elo, victim_elo, k=30) -> Tuple[float, float]:
@@ -111,12 +138,36 @@ def read_server_usernames(lines: List[str]) -> Set:
         print("tf2 server connection timeout")
     return names
 
+def parse_objective_line(line:str, names: Set[str]) -> Optional[ObjectiveEvent]:
+    pat = r"^(?P<users>.*) (defended|captured) (?P<objective>.*) for team #(?P<team>[23])\s+$"
+    teams = {"3": "blue", "2":"red"}
+    match = re.search(pat, line)
+    if not match:
+        return None
+    
+    users = set()
+    user_str = match.group("users")
+    for _ in range(len(names) * len(names)):
+        if not user_str:
+            break
+        
+        for n in names:
+            if user_str.startswith(n + ", "):
+                users.add(n)
+                user_str = user_str[len(n) + 2:]
+            elif user_str == n:
+                users.add(n)
+                user_str = ""
+                break
+
+    return ObjectiveEvent(users, match.group("objective"), teams[match.group("team")])
 
 def parse_kill_line(line: str, names) -> Optional[KillEvent]:
     """
     Parses the lines of a log.  If it is a valid kill event, it
     returns a kill event.  Otherwise, it returns None.
     """
+    pat = r"(?P<users>.*) with (?P<weapon>\w+)\.( \(crit\))?\s*$"
     # line[:-7] removes the " (crit)" at the end of the line
     nocrit = line[:-7] if line.strip().endswith(" (crit)") else line
     if " killed " not in nocrit:

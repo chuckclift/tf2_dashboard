@@ -90,6 +90,16 @@ def get_killstreak(user: str, kill_events: List[KillEvent]) -> int:
             return streak_kills
     return streak_kills
 
+def get_killstreaks(kill_events: List[KillEvent]) -> Dict[str, List[int]]:
+    """
+    Returns each killstreak 
+    """
+    killstreaks: Dict[str, List[int]]= defaultdict(lambda: [0])
+    
+    for ke in kill_events:
+        killstreaks[ke.killer][-1] += 1
+        killstreaks[ke.victim].append(0)
+    return killstreaks
 
 
 def get_teams(user: str, kill_events: List[KillEvent]):

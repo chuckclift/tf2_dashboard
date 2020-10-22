@@ -12,9 +12,21 @@ import sqlite3
 from PIL import ImageTk, Image # type: ignore
 from log_parsing import * #pylint: disable=unused-import,unused-wildcard-import
 
+
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+
 fpath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Team Fortress 2\\tf\\logs.txt"
 
 def read_latest_game(path: str) -> Optional[List[str]]:
+    """
+    Reads the tf2 log file from the given path and returns the lines for the
+    most recent or in progress game.  If there is not a game in the file, it
+    returns none.
+    """
     with open(path, "rb") as f:
         for i in range(-100_000, -1 * os.path.getsize(path), -100_000):
             f.seek(i, 2)
@@ -27,8 +39,7 @@ def read_latest_game(path: str) -> Optional[List[str]]:
         game_index = s.rfind(os.linesep + "Team Fortress")
         if game_index > 0:
             return re.split(os.linesep, s[game_index:])
-        else:
-            return None
+        return None
 
  
 class_icons = {"demoman", "spy", "medic", "soldier", "heavyweapons", "sniper",
@@ -121,6 +132,17 @@ tk_ize = lambda c: ImageTk.PhotoImage(Image.open(f"tf2_icons/{c}.png").resize((1
 class_tk_imgs = {cn: tk_ize(cn) for cn in class_icons}
 
 
+
+
+
+tkf = Figure(figsize=(5,2), dpi=100)
+tk_subplot = tkf.add_subplot(111)
+canvas = FigureCanvasTkAgg(tkf, master)
+canvas.get_tk_widget().grid(row=21, column=0, columnspan=20, rowspan=2,
+           sticky=tk.W+tk.E+tk.N+tk.S, padx=5, pady=5)
+
+
+    
 def update_avg_team_elo(cells, allies, enemies, player_elo):
     if allies and enemies:
         ally_avg_elo = int(mean(player_elo.get(a) for a in allies))
@@ -159,14 +181,7 @@ def render() -> None:
     lines = read_latest_game(fpath)
     if not lines:
         return None
-    gamer_names =  read_connections(lines) # set()
-    # with open(fpath, encoding="utf-8", errors="ignore") as f:
-    #     lines = f.readlines()
-    # gamer_names.update(read_connections(lines)) # lines[-1000:]))
-
-    
-
-
+    gamer_names =  read_connections(lines) 
     player_elo: Dict[str, float] = defaultdict(lambda: 1600.0)
     rivals: Dict = defaultdict(lambda: 0)
     class_deaths: Dict = defaultdict(lambda: 0)
@@ -174,15 +189,18 @@ def render() -> None:
     player_class: Dict = {}
 
     prev_lines = len(lines)
-
-    # lines = []
-    # with open(fpath, encoding="utf-8", errors="ignore") as f:
-    #     lines = f.readlines()
-
     game_lines = latest_game_lines(lines, user)
     opt_kill_events = [parse_kill_line(l, gamer_names) for l in game_lines]
     kill_events: List[KillEvent] = [a for a in opt_kill_events if a]
+
+    # the log does not contain disconnection events. This is a workaround
+    # to only include players who are actively doing something.
+    active_players = set(ke.killer for ke in kill_events[-100:]).union(
+                         ke.victim for ke in kill_events[-100:])
+
     allies, enemies = get_teams(user, kill_events)
+    allies = [a for a in allies if a in active_players]
+    enemies = [a for a in enemies if a in active_players]
 
     if len(lines) > prev_lines:
         gamer_names.update(read_server_usernames(lines))
@@ -217,6 +235,8 @@ def render() -> None:
             rivals[killer] += 1
             class_deaths[weapon_class.get(weapon, "many")] += 1
             dmg_type_deaths[weapon_dmg.get(weapon, "melee")] += 1
+    print("kill events:", len(kill_events))
+
 
     tk_kills.set(kills)
     tk_deaths.set(deaths)
@@ -229,19 +249,27 @@ def render() -> None:
     
     ally_info = sorted([(player_elo[a], a, player_class.get(a, "many"))
                         for a in allies], reverse=True)
-
-
-
+    
     enemy_info = sorted([(player_elo[a], a, player_class.get(a, "many"))
                          for a in enemies], reverse=True)
 
+
+            
+    rival_info = sorted((v, k) for k, v in rivals.items())
+    rival_info += [(0, "")] * (player_rows - len(rival_info))
+
     # padding info cells with empty data so old data is overwritten
-    ally_info += [(0.0, "", "many")] * (player_rows - len(ally_info) )
-    enemy_info += [(0.0, "", "many")] * (player_rows - len(enemy_info))
+    ally_info += [(0.0, "", "empty")] * (player_rows - len(ally_info) )
+    enemy_info += [(0.0, "", "empty")] * (player_rows - len(enemy_info))
 
     update_avg_team_elo(labels[8], allies, enemies, player_elo)
     tk_ally_kills.set(sum(1 for a in kill_events if a.killer in allies))
     tk_enemy_kills.set(sum(1 for a in kill_events if a.killer in enemies))
+    padded_kill_events = get_killstreaks(kill_events)[user][-8:]
+    tk_subplot.clear()
+    tk_subplot.plot(list(range(len(padded_kill_events))),padded_kill_events)
+    canvas.draw()
+
 
     for i, n in zip(range(11, 18), ["explosive","bullet", "fire", "melee"]):
         labels[i][0].configure(text=n)
@@ -265,12 +293,15 @@ def render() -> None:
                                          rival_vars,
                                          rival_elo_vars,
                                          rival_class_icons):
-        rv.set(f"{rname} ({rdeaths})")
+        rv.set(f"{rname[:20]:>20} ({rdeaths})")
         rev.set(round(player_elo[rname], 1))
         rci.configure(image=class_tk_imgs[player_class.get(rname, "many")])
 
+    
+
 
     master.after(5 * 1000, render)
+    return None
 
 master.after(0, render)
 master.mainloop()

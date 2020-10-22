@@ -131,18 +131,13 @@ for row in range(21):
 tk_ize = lambda c: ImageTk.PhotoImage(Image.open(f"tf2_icons/{c}.png").resize((16,16)))
 class_tk_imgs = {cn: tk_ize(cn) for cn in class_icons}
 
-
-
-
-
-tkf = Figure(figsize=(5,2), dpi=100)
+tkf = Figure(figsize=(5,4), dpi=100)
 tk_subplot = tkf.add_subplot(111)
 canvas = FigureCanvasTkAgg(tkf, master)
 canvas.get_tk_widget().grid(row=21, column=0, columnspan=20, rowspan=2,
            sticky=tk.W+tk.E+tk.N+tk.S, padx=5, pady=5)
 
 
-    
 def update_avg_team_elo(cells, allies, enemies, player_elo):
     if allies and enemies:
         ally_avg_elo = int(mean(player_elo.get(a) for a in allies))
@@ -235,14 +230,12 @@ def render() -> None:
             rivals[killer] += 1
             class_deaths[weapon_class.get(weapon, "many")] += 1
             dmg_type_deaths[weapon_dmg.get(weapon, "melee")] += 1
-    print("kill events:", len(kill_events))
-
 
     tk_kills.set(kills)
     tk_deaths.set(deaths)
     tk_kd.set(round(kills / deaths if deaths else 0, 2))
     tk_streak.set(get_killstreak(user, kill_events))
-    tk_elo.set(round(player_elo[user], 1))
+    tk_elo.set(int(player_elo[user]))
 
     top_player_rows = list(range(2, 8))
     player_rows = len(top_player_rows)
@@ -255,19 +248,23 @@ def render() -> None:
 
 
             
-    rival_info = sorted((v, k) for k, v in rivals.items())
+    rival_info = sorted((v, k) for k, v in rivals.items() if k in active_players)
     rival_info += [(0, "")] * (player_rows - len(rival_info))
 
     # padding info cells with empty data so old data is overwritten
-    ally_info += [(0.0, "", "empty")] * (player_rows - len(ally_info) )
-    enemy_info += [(0.0, "", "empty")] * (player_rows - len(enemy_info))
+    ally_info += [(0, "", "empty")] * (player_rows - len(ally_info) )
+    enemy_info += [(0, "", "empty")] * (player_rows - len(enemy_info))
 
     update_avg_team_elo(labels[8], allies, enemies, player_elo)
     tk_ally_kills.set(sum(1 for a in kill_events if a.killer in allies))
     tk_enemy_kills.set(sum(1 for a in kill_events if a.killer in enemies))
     padded_kill_events = get_killstreaks(kill_events)[user][-8:]
     tk_subplot.clear()
+    
     tk_subplot.plot(list(range(len(padded_kill_events))),padded_kill_events)
+    tk_subplot.set_ylabel("Kills")
+    tk_subplot.set_xlabel("Life Number")
+    tk_subplot.set_title("Killstreak History")
     canvas.draw()
 
 
@@ -279,13 +276,13 @@ def render() -> None:
 
     for i, (elo, uname, utf2_class) in zip(top_player_rows, ally_info):
         labels[i][0].configure(text=f"{uname[:20]:>20}")
-        labels[i][1].configure(text=round(elo, 1))
+        labels[i][1].configure(text=int(elo))
         labels[i][2].configure(image=class_tk_imgs[utf2_class])
 
 
     for i, (elo, uname, utf2_class) in zip(top_player_rows, enemy_info):
         labels[i][3].configure(text=f"{uname[:20]:>20}")
-        labels[i][4].configure(text=round(elo, 1))
+        labels[i][4].configure(text=int(elo))
         labels[i][5].configure(image=class_tk_imgs[utf2_class])
     
 
@@ -294,7 +291,7 @@ def render() -> None:
                                          rival_elo_vars,
                                          rival_class_icons):
         rv.set(f"{rname[:20]:>20} ({rdeaths})")
-        rev.set(round(player_elo[rname], 1))
+        rev.set(int(player_elo[rname]))
         rci.configure(image=class_tk_imgs[player_class.get(rname, "many")])
 
     
